@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 use std::net::{TcpStream, ToSocketAddrs};
 use chrono::Local;
 use std::collections::HashMap;
-use image; // image decoding for avatars
+use image;
 
 #[derive(Clone)]
 struct UiMessage {
@@ -49,31 +49,20 @@ struct MyApp {
     theme_inited: bool,
     selected_file: Option<PathBuf>,
     selected_file_label: String,
-    // Profile settings
     avatar_path: Option<PathBuf>,
     about_edit: String,
-
-    // Unread notifications (per current chat)
     unread_count: usize,
     unread_popup_visible: bool,
-
-    // Pending registration info until email verification
     pending_reg_email: Option<String>,
     pending_reg_password: Option<String>,
     pending_reg_display_name: Option<String>,
-
-    // Sidebar chat list: (peer_email, unread_count)
     chat_list: Vec<(String, usize)>,
-    // Auto-refresh sidebar chats
     chatlist_last_refresh: Instant,
     chatlist_refresh_every: Duration,
     show_about_popup: bool,
-    // Peer profile popup
     show_peer_about: bool,
     peer_about_text: String,
     avatar_textures: HashMap<String, egui::TextureHandle>,
-
-    // Password reset state
     show_reset_dialog: bool,
     reset_email: String,
     reset_code: Option<String>,
@@ -146,7 +135,6 @@ impl MyApp {
                 }
             }
             if let Some(tex) = self.avatar_textures.get(&key) {
-                // NOTE: egui 0.33 Mesh::add_rect_with_uv takes (rect, uv, color).
                 let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
                 let mut mesh = egui::epaint::Mesh::with_texture(tex.id());
                 mesh.add_rect_with_uv(rect, uv, egui::Color32::WHITE);
@@ -309,11 +297,8 @@ impl MyApp {
         println!("[email] creating SMTP credentials");
         let creds = Credentials::new(smtp_user.clone(), smtp_pass);
 
-        // Optional SMTP_PORT override
         let smtp_port: Option<u16> = env::var("SMTP_PORT").ok().and_then(|s| s.parse().ok());
         if let Some(port) = smtp_port { println!("[email] SMTP_PORT={port}"); } else { println!("[email] SMTP_PORT=<default>"); }
-
-        // ---- Preflight connectivity test to detect network blocks/timeouts ----
         let port = smtp_port.unwrap_or(587);
         let socket_spec = format!("{smtp_host}:{port}");
         println!("[email] preflight: resolving {socket_spec}");
@@ -345,7 +330,6 @@ impl MyApp {
                 return Err(msg);
             }
         }
-        // ----------------------------------------------------------------------
 
         println!("[email] building SmtpTransport relay={smtp_host}");
         let mut builder = SmtpTransport::relay(&smtp_host)
@@ -431,7 +415,6 @@ impl MyApp {
                 } else {
                     println!("[chat] no messages in dialog");
                 }
-                // Compute unread in this dialog and mark as read
                 let mut unread = 0usize;
                 for m in &self.messages {
                     if m.from != user.email && !m.is_read {
@@ -440,7 +423,6 @@ impl MyApp {
                     }
                 }
                 self.unread_count = unread;
-                // Do not show popup; just update sidebar counters
                 self.unread_popup_visible = false;
                 self.refresh_chat_list();
                 if self.messages.is_empty() {
@@ -470,13 +452,11 @@ impl MyApp {
             return;
         }
         if self.new_message_text.trim().is_empty() && self.selected_file.is_none() {
-            // Nothing to send
             return;
         }
         let mut text = self.new_message_text.clone();
         let mut attached_any = false;
         if let Some(path) = &self.selected_file {
-            // Copy attachment into app storage, then embed a semantic tag instead of raw path
             let filename = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "file".to_string());
             let target_dir = Self::attachments_dir();
             let ts = Local::now().format("%Y%m%d_%H%M%S");
@@ -490,8 +470,6 @@ impl MyApp {
             attached_any = true;
         }
         if text.trim().is_empty() && attached_any {
-            // user attached a file without typing text; send the attachment tag only
-            // (text already contains the tag from above)
         }
         match messages::send_message(
             &self.conn,
@@ -702,7 +680,6 @@ impl eframe::App for MyApp {
                                 self.status = "Passwords do not match".to_string();
                                 self.status_is_error = true;
                             } else {
-                                // If user already exists, don't send code; ask to log in
                                 match auth::get_user_by_email(&self.conn, self.reg_email.as_str()) {
                                     Ok(Some(_existing)) => {
                                         println!("[register] email already registered: {}", self.reg_email);
@@ -712,7 +689,6 @@ impl eframe::App for MyApp {
                                         return;
                                     }
                                     Ok(None) => {
-                                        // proceed
                                     }
                                     Err(e) => {
                                         println!("[register][error] lookup failed: {}", e);
@@ -721,8 +697,6 @@ impl eframe::App for MyApp {
                                         return;
                                     }
                                 }
-
-                                // Generate and send code, but DO NOT create the user yet
                                 let code = MyApp::generate_verification_code();
                                 self.verification_code = Some(code.clone());
                                 self.verification_input.clear();
@@ -755,13 +729,11 @@ impl eframe::App for MyApp {
                         if let Some(code) = &self.verification_code {
                             if self.verification_input == *code {
                                 println!("[verify] code match OK");
-                                // Proceed to create the user now that email is verified
                                 if let (Some(email), Some(password), Some(display_name)) = (
                                     self.pending_reg_email.clone(),
                                     self.pending_reg_password.clone(),
                                     self.pending_reg_display_name.clone(),
                                 ) {
-                                    // First, re-check if a user already exists (could have been created earlier)
                                     match auth::get_user_by_email(&self.conn, email.as_str()) {
                                         Ok(Some(_)) => {
                                             println!("[verify] user already exists, skipping creation");
@@ -769,7 +741,6 @@ impl eframe::App for MyApp {
                                             self.status = "Email verified. This email is already registered — please log in.".to_string();
                                             self.status_is_error = false;
                                             self.login_email = email.clone();
-                                            // Clear pending registration data and code
                                             self.pending_reg_email = None;
                                             self.pending_reg_password = None;
                                             self.pending_reg_display_name = None;
@@ -904,7 +875,6 @@ impl eframe::App for MyApp {
                 ui.separator();
                 ui.heading("Chats");
                 if self.current_user.is_some() {
-                    // Sidebar list of chats
                     egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
                         if self.chat_list.is_empty() { ui.label("No chats yet"); }
                         for (peer, unread) in self.chat_list.clone() {
@@ -967,7 +937,6 @@ impl eframe::App for MyApp {
 
                         let prefix = if is_me { "You: " } else { &msg.from };
                         ui.horizontal(|ui| {
-                            // Unified message rendering for both sender and receiver
                             let content = msg.text.as_str();
                             if let Some(rest) = content.strip_prefix("[image:") {
                                 let p = rest.trim_end_matches(']');
@@ -1002,7 +971,6 @@ impl eframe::App for MyApp {
                 });
                 ui.add_space(6.0);
             }
-            // composer moved to a persistent bottom panel (see below)
         });
         egui::TopBottomPanel::bottom("bottom_composer").show(ctx, |ui| {
             ui.add_space(4.0);
